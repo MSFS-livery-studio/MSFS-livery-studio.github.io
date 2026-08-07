@@ -1,0 +1,217 @@
+{
+  "id": "fbw-a380x-surface-v070",
+  "display_name": "FlyByWire A380X",
+  "aircraft_model": "A380-842",
+  "profile_version": "0.7.0",
+  "editor_canvas": {
+    "width": 1024,
+    "height": 1024
+  },
+  "preferred_texture_resolution": 4096,
+  "built_in": true,
+  "workflow": "orthographic-surface-projection",
+  "source_mesh": "A380X_PAINTKIT.obj",
+  "source_mesh_included": false,
+  "notes": "v0.7 orthographic surface workflow. Users edit recognizable aircraft views (fuselage side/top/bottom, vertical tail, wings, and engine nacelles). UV sheets remain hidden; bake maps were remapped to the clean orthographic canvases.",
+  "surfaces": [
+    {
+      "id": "body_left",
+      "display_name": "Body \u00b7 Left Side",
+      "group": "Body",
+      "mask": "surface_masks/body_left.png",
+      "guide": "surface_guides/body_left.png",
+      "pair": 1,
+      "orientation": "BODY \u00b7 LEFT SIDE",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "body_right",
+      "display_name": "Body \u00b7 Right Side",
+      "group": "Body",
+      "mask": "surface_masks/body_right.png",
+      "guide": "surface_guides/body_right.png",
+      "pair": 0,
+      "orientation": "BODY \u00b7 RIGHT SIDE",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "body_top",
+      "display_name": "Body \u00b7 Top",
+      "group": "Body",
+      "mask": "surface_masks/body_top.png",
+      "guide": "surface_guides/body_top.png",
+      "pair": null,
+      "orientation": "BODY \u00b7 TOP",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "body_bottom",
+      "display_name": "Body \u00b7 Bottom",
+      "group": "Body",
+      "mask": "surface_masks/body_bottom.png",
+      "guide": "surface_guides/body_bottom.png",
+      "pair": null,
+      "orientation": "BODY \u00b7 BOTTOM",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "tail_left",
+      "display_name": "Tail \u00b7 Left Side",
+      "group": "Tail",
+      "mask": "surface_masks/tail_left.png",
+      "guide": "surface_guides/tail_left.png",
+      "pair": 5,
+      "orientation": "TAIL \u00b7 LEFT SIDE",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "tail_right",
+      "display_name": "Tail \u00b7 Right Side",
+      "group": "Tail",
+      "mask": "surface_masks/tail_right.png",
+      "guide": "surface_guides/tail_right.png",
+      "pair": 4,
+      "orientation": "TAIL \u00b7 RIGHT SIDE",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "wings_top",
+      "display_name": "Wings \u00b7 Top",
+      "group": "Wings",
+      "mask": "surface_masks/wings_top.png",
+      "guide": "surface_guides/wings_top.png",
+      "pair": null,
+      "orientation": "WINGS \u00b7 TOP",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "wings_bottom",
+      "display_name": "Wings \u00b7 Bottom",
+      "group": "Wings",
+      "mask": "surface_masks/wings_bottom.png",
+      "guide": "surface_guides/wings_bottom.png",
+      "pair": null,
+      "orientation": "WINGS \u00b7 BOTTOM",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "engine_1",
+      "display_name": "Engine 1 \u00b7 Left Outer",
+      "group": "Engines",
+      "mask": "surface_masks/engine_1.png",
+      "guide": "surface_guides/engine_1.png",
+      "pair": 11,
+      "orientation": "ENGINE 1 \u00b7 LEFT OUTER",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "engine_2",
+      "display_name": "Engine 2 \u00b7 Left Inner",
+      "group": "Engines",
+      "mask": "surface_masks/engine_2.png",
+      "guide": "surface_guides/engine_2.png",
+      "pair": 10,
+      "orientation": "ENGINE 2 \u00b7 LEFT INNER",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "engine_3",
+      "display_name": "Engine 3 \u00b7 Right Inner",
+      "group": "Engines",
+      "mask": "surface_masks/engine_3.png",
+      "guide": "surface_guides/engine_3.png",
+      "pair": 9,
+      "orientation": "ENGINE 3 \u00b7 RIGHT INNER",
+      "guide_version": "0.7.0"
+    },
+    {
+      "id": "engine_4",
+      "display_name": "Engine 4 \u00b7 Right Outer",
+      "group": "Engines",
+      "mask": "surface_masks/engine_4.png",
+      "guide": "surface_guides/engine_4.png",
+      "pair": 8,
+      "orientation": "ENGINE 4 \u00b7 RIGHT OUTER",
+      "guide_version": "0.7.0"
+    }
+  ],
+  "texture_outputs": [
+    {
+      "material": "A380X_FUSE1",
+      "file": "A380X_FUSE1.png",
+      "bake_map": "bake_maps/00.png"
+    },
+    {
+      "material": "A380X_FUSE2",
+      "file": "A380X_FUSE2.png",
+      "bake_map": "bake_maps/01.png"
+    },
+    {
+      "material": "A380X_FUSE3",
+      "file": "A380X_FUSE3.png",
+      "bake_map": "bake_maps/02.png"
+    },
+    {
+      "material": "A380X_FUSE4",
+      "file": "A380X_FUSE4.png",
+      "bake_map": "bake_maps/03.png"
+    },
+    {
+      "material": "A380X_FUSE5",
+      "file": "A380X_FUSE5.png",
+      "bake_map": "bake_maps/04.png"
+    },
+    {
+      "material": "A380_EXTERIOR_WING1",
+      "file": "A380_EXTERIOR_WING1.png",
+      "bake_map": "bake_maps/05.png"
+    },
+    {
+      "material": "A380_EXTERIOR_WING1_2",
+      "file": "A380_EXTERIOR_WING1_2.png",
+      "bake_map": "bake_maps/06.png"
+    },
+    {
+      "material": "A380_EXTERIOR_WING2",
+      "file": "A380_EXTERIOR_WING2.png",
+      "bake_map": "bake_maps/07.png"
+    },
+    {
+      "material": "A380_EXTERIOR_WING2_2",
+      "file": "A380_EXTERIOR_WING2_2.png",
+      "bake_map": "bake_maps/08.png"
+    },
+    {
+      "material": "A380_EXTERIOR_ENG_LH",
+      "file": "A380_EXTERIOR_ENG_LH.png",
+      "bake_map": "bake_maps/09.png"
+    },
+    {
+      "material": "A380_EXTERIOR_ENG_RH",
+      "file": "A380_EXTERIOR_ENG_RH.png",
+      "bake_map": "bake_maps/10.png"
+    },
+    {
+      "material": "A380_EXTERTIOR_PYLON",
+      "file": "A380_EXTERTIOR_PYLON.png",
+      "bake_map": "bake_maps/11.png"
+    },
+    {
+      "material": "A380_EXTERIOR_WINGFENCE",
+      "file": "A380_EXTERIOR_WINGFENCE.png",
+      "bake_map": "bake_maps/12.png"
+    },
+    {
+      "material": "A380X_ACCESSORIES",
+      "file": "A380X_ACCESSORIES.png",
+      "bake_map": "bake_maps/13.png"
+    },
+    {
+      "material": "A380_COCKPIT_WINDSHIELD_FRAME_4k",
+      "file": "A380_COCKPIT_WINDSHIELD_FRAME_4k.png",
+      "bake_map": "bake_maps/14.png"
+    }
+  ],
+  "preview_mesh": "preview_mesh.bin",
+  "guide_style": "orthographic-v070"
+}
