@@ -1,0 +1,516 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const VERSION = '0.6.0';
+const PROFILE_URL = './Profiles/A380X/profile.json';
+const PROFILE_BASE = new URL('./Profiles/A380X/', location.href).href;
+const W = 1024, H = 1024;
+
+const $ = (id) => document.getElementById(id);
+const ui = {
+  list: $('surfaceList'), canvas: $('designCanvas'), title: $('surfaceTitle'), hint: $('surfaceHint'),
+  status: $('statusText'), coords: $('coordText'), dot: $('profileDot'), profileStatus: $('profileStatus'),
+  designer: $('designerView'), preview: $('previewView'), btn2d: $('btn2d'), btn3d: $('btn3d'),
+  threeHost: $('threeHost'), guideToggle: $('guideToggle'), mirror: $('mirrorToggle'),
+  paintColor: $('paintColor'), brushSize: $('brushSize'), brushSizeLabel: $('brushSizeLabel'),
+  textInput: $('textInput'), textSize: $('textSize'), textColor: $('textColor'), fontSelect: $('fontSelect'),
+  objectEmpty: $('objectEmpty'), objectControls: $('objectControls'),
+  exportModal: $('exportModal'), progressBar: $('progressBar'), progressText: $('progressText'),
+  toast: $('toast')
+};
+
+const ctx = ui.canvas.getContext('2d', { alpha: true, willReadFrequently: false });
+let profile = null;
+let surfaces = [];
+let current = 0;
+let tool = 'brush';
+let painting = false;
+let lastPoint = null;
+let selectedObject = -1;
+let dragObjectOffset = null;
+let history = [];
+let exportWorker = null;
+let previewDirtyRegions = new Set();
+let previewUpdateTimer = 0;
+
+const preview3d = {
+  ready: false,
+  scene: null, camera: null, renderer: null, controls: null, mesh: null, geometry: null,
+  regions: null, sx: null, sy: null, regionFaces: [], animation: 0,
+  defaultCamera: null
+};
+
+function setStatus(text) { ui.status.textContent = text; }
+function toast(text) {
+  ui.toast.textContent = text;
+  ui.toast.classList.remove('hidden');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => ui.toast.classList.add('hidden'), 2600);
+}
+function sanitizeName(s) {
+  return s.trim().replace(/[^a-zA-Z0-9 _-]+/g,'').replace(/[ _-]+/g,'_').replace(/^_+|_+$/g,'');
+}
+function hexToRgba(hex, alpha=255) {
+  const n = parseInt(hex.slice(1),16);
+  return [(n>>16)&255,(n>>8)&255,n&255,alpha];
+}
+function pointFromEvent(ev) {
+  const r = ui.canvas.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(W-1, (ev.clientX-r.left) * W / r.width)),
+    y: Math.max(0, Math.min(H-1, (ev.clientY-r.top) * H / r.height))
+  };
+}
+function makeCanvas() {
+  const c = document.createElement('canvas'); c.width=W; c.height=H; return c;
+}
+
+async function loadImage(url) {
+  const res = await fetch(url, { cache:'no-cache' });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${url}`);
+  const blob = await res.blob();
+  return await createImageBitmap(blob);
+}
+function makeProcessedMask(bitmap) {
+  const src = makeCanvas(), sctx = src.getContext('2d', {willReadFrequently:true});
+  sctx.drawImage(bitmap,0,0,W,H);
+  const im = sctx.getImageData(0,0,W,H);
+  for (let i=0;i<im.data.length;i+=4) {
+    const r=im.data[i], g=im.data[i+1], b=im.data[i+2], a=im.data[i+3];
+    let m = a < 250 ? a : Math.max(r,g,b);
+    im.data[i]=255; im.data[i+1]=255; im.data[i+2]=255; im.data[i+3]=m;
+  }
+  sctx.clearRect(0,0,W,H); sctx.putImageData(im,0,0);
+  return src;
+}
+function applyMask(surface) {
+  const c = surface.paint, pctx = c.getContext('2d');
+  pctx.save();
+  pctx.globalCompositeOperation='destination-in';
+  pctx.drawImage(surface.maskCanvas,0,0);
+  pctx.restore();
+}
+function baseSurface(surface) {
+  const c = makeCanvas(), cctx = c.getContext('2d');
+  cctx.fillStyle='#f8fafc'; cctx.fillRect(0,0,W,H);
+  cctx.globalCompositeOperation='destination-in';
+  cctx.drawImage(surface.maskCanvas,0,0);
+  cctx.globalCompositeOperation='source-over';
+  return c;
+}
+
+async function init() {
+  if (location.protocol === 'file:') {
+    setStatus('Run this site through GitHub Pages or an HTTP server.');
+    ui.dot.classList.add('bad');
+    ui.profileStatus.textContent='HTTP required';
+    return;
+  }
+  try {
+    const res = await fetch(PROFILE_URL, {cache:'no-cache'});
+    if (!res.ok) throw new Error(`Profile HTTP ${res.status}`);
+    profile = await res.json();
+    surfaces = await Promise.all(profile.surfaces.map(async (spec, idx) => {
+      const [maskBmp, guideBmp] = await Promise.all([
+        loadImage(new URL(spec.mask, PROFILE_BASE)),
+        loadImage(new URL(spec.guide, PROFILE_BASE))
+      ]);
+      const maskCanvas = makeProcessedMask(maskBmp);
+      const paint = makeCanvas();
+      const surf = { spec, idx, maskCanvas, guideBmp, paint, base:null, objects:[], dirty:true };
+      surf.base = baseSurface(surf);
+      return surf;
+    }));
+    buildSurfaceList();
+    selectSurface(0);
+    ui.dot.classList.add('ok');
+    ui.profileStatus.textContent=`${profile.display_name} · ${surfaces.length} surfaces`;
+    setStatus('Ready');
+    registerServiceWorker();
+  } catch (err) {
+    console.error(err);
+    ui.dot.classList.add('bad');
+    ui.profileStatus.textContent='Profile failed';
+    setStatus(`Could not load A380X profile: ${err.message}`);
+  }
+}
+
+function buildSurfaceList() {
+  ui.list.replaceChildren();
+  const groups = new Map();
+  profile.surfaces.forEach((s,i) => {
+    if (!groups.has(s.group)) groups.set(s.group, []);
+    groups.get(s.group).push([s,i]);
+  });
+  for (const [group, list] of groups) {
+    const wrap=document.createElement('div'); wrap.className='surface-group';
+    const t=document.createElement('div'); t.className='surface-group-title'; t.textContent=group; wrap.appendChild(t);
+    for (const [s,i] of list) {
+      const b=document.createElement('button'); b.className='surface-btn'; b.textContent=s.display_name; b.dataset.index=i;
+      b.addEventListener('click',()=>selectSurface(i));
+      wrap.appendChild(b);
+    }
+    ui.list.appendChild(wrap);
+  }
+}
+function selectSurface(i) {
+  current=i; selectedObject=-1; updateObjectControls();
+  document.querySelectorAll('.surface-btn').forEach(b=>b.classList.toggle('active', Number(b.dataset.index)===i));
+  ui.title.textContent=surfaces[i].spec.display_name;
+  ui.hint.textContent='Paint this aircraft surface. UV texture placement is generated automatically.';
+  render2D();
+}
+function render2D() {
+  if (!surfaces[current]) return;
+  const s=surfaces[current];
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+  ctx.drawImage(s.base,0,0);
+  ctx.drawImage(s.paint,0,0);
+  drawObjects(ctx,s,false);
+  if (ui.guideToggle.checked) {
+    ctx.save(); ctx.globalAlpha=.72; ctx.drawImage(s.guideBmp,0,0,W,H); ctx.restore();
+  }
+  if (selectedObject>=0 && s.objects[selectedObject]) drawSelection(ctx,s.objects[selectedObject]);
+}
+function drawObjects(target, surface, flatten=false) {
+  for (let i=0;i<surface.objects.length;i++) {
+    const o=surface.objects[i];
+    target.save();
+    if (o.type==='image') {
+      target.drawImage(o.image,o.x,o.y,o.w,o.h);
+    } else if (o.type==='text') {
+      target.fillStyle=o.color; target.textBaseline='top';
+      target.font=`${o.size}px ${o.font}`;
+      target.fillText(o.text,o.x,o.y);
+    }
+    target.restore();
+  }
+  if (flatten) {
+    target.save();
+    target.globalCompositeOperation='destination-in';
+    target.drawImage(surface.maskCanvas,0,0);
+    target.restore();
+  }
+}
+function objectBounds(o, targetCtx=ctx) {
+  if (o.type==='image') return {x:o.x,y:o.y,w:o.w,h:o.h};
+  targetCtx.save(); targetCtx.font=`${o.size}px ${o.font}`;
+  const m=targetCtx.measureText(o.text); targetCtx.restore();
+  return {x:o.x,y:o.y,w:Math.max(1,m.width),h:o.size*1.22};
+}
+function drawSelection(c,o) {
+  const b=objectBounds(o,c);
+  c.save(); c.strokeStyle='#2563eb'; c.lineWidth=3; c.setLineDash([9,6]); c.strokeRect(b.x-4,b.y-4,b.w+8,b.h+8); c.restore();
+}
+function hitObject(surface,p) {
+  for (let i=surface.objects.length-1;i>=0;i--) {
+    const b=objectBounds(surface.objects[i]);
+    if (p.x>=b.x && p.x<=b.x+b.w && p.y>=b.y && p.y<=b.y+b.h) return i;
+  }
+  return -1;
+}
+function flattenSurface(index) {
+  const s=surfaces[index], c=makeCanvas(), cctx=c.getContext('2d');
+  cctx.clearRect(0,0,W,H);
+  cctx.drawImage(s.paint,0,0);
+  drawObjects(cctx,s,true);
+  return c;
+}
+function pushHistory(index) {
+  const pctx=surfaces[index].paint.getContext('2d',{willReadFrequently:true});
+  history.push({ index, image:pctx.getImageData(0,0,W,H), objects:surfaces[index].objects.map(o=>({...o})) });
+  if (history.length>10) history.shift();
+}
+function undo() {
+  const h=history.pop();
+  if (!h) return toast('Nothing to undo');
+  const s=surfaces[h.index];
+  s.paint.getContext('2d').putImageData(h.image,0,0);
+  s.objects=h.objects;
+  markSurfaceDirty(h.index);
+  selectSurface(h.index);
+  setStatus('Undo');
+}
+function pairIndex(index) {
+  const p=profile.surfaces[index].pair;
+  return Number.isInteger(p) ? p : -1;
+}
+function mirroredPoint(p) { return {x:W-1-p.x,y:p.y}; }
+
+function stroke(index,a,b,erase=false,mirror=false) {
+  const s=surfaces[index], pctx=s.paint.getContext('2d');
+  pctx.save();
+  pctx.globalCompositeOperation=erase?'destination-out':'source-over';
+  pctx.strokeStyle=ui.paintColor.value;
+  pctx.lineWidth=Number(ui.brushSize.value);
+  pctx.lineCap='round'; pctx.lineJoin='round';
+  pctx.beginPath(); pctx.moveTo(a.x,a.y); pctx.lineTo(b.x,b.y); pctx.stroke(); pctx.restore();
+  applyMask(s); markSurfaceDirty(index);
+  if (mirror && pairIndex(index)>=0) {
+    const pi=pairIndex(index), pa=mirroredPoint(a), pb=mirroredPoint(b);
+    const ps=surfaces[pi], pc=ps.paint.getContext('2d');
+    pc.save(); pc.globalCompositeOperation=erase?'destination-out':'source-over';
+    pc.strokeStyle=ui.paintColor.value; pc.lineWidth=Number(ui.brushSize.value); pc.lineCap='round'; pc.lineJoin='round';
+    pc.beginPath(); pc.moveTo(pa.x,pa.y); pc.lineTo(pb.x,pb.y); pc.stroke(); pc.restore();
+    applyMask(ps); markSurfaceDirty(pi);
+  }
+}
+function fillSurface(index, mirror=false) {
+  pushHistory(index);
+  const s=surfaces[index], p=s.paint.getContext('2d');
+  p.save(); p.globalCompositeOperation='source-over'; p.fillStyle=ui.paintColor.value; p.fillRect(0,0,W,H); p.restore(); applyMask(s); markSurfaceDirty(index);
+  if (mirror && pairIndex(index)>=0) {
+    const pi=pairIndex(index); pushHistory(pi);
+    const ps=surfaces[pi], pc=ps.paint.getContext('2d');
+    pc.fillStyle=ui.paintColor.value; pc.fillRect(0,0,W,H); applyMask(ps); markSurfaceDirty(pi);
+  }
+  render2D(); setStatus('Surface filled');
+}
+
+ui.canvas.addEventListener('pointerdown', ev => {
+  if (!surfaces[current]) return;
+  const p=pointFromEvent(ev); ui.canvas.setPointerCapture(ev.pointerId);
+  if (tool==='fill') return fillSurface(current,ui.mirror.checked);
+  if (tool==='move') {
+    const hit=hitObject(surfaces[current],p); selectedObject=hit; updateObjectControls();
+    if (hit>=0) {
+      pushHistory(current);
+      const b=objectBounds(surfaces[current].objects[hit]);
+      dragObjectOffset={x:p.x-b.x,y:p.y-b.y};
+    }
+    render2D(); return;
+  }
+  pushHistory(current);
+  painting=true; lastPoint=p;
+  stroke(current,p,p,tool==='eraser',ui.mirror.checked); render2D();
+});
+ui.canvas.addEventListener('pointermove', ev => {
+  const p=pointFromEvent(ev); ui.coords.textContent=`${Math.round(p.x)}, ${Math.round(p.y)}`;
+  if (tool==='move' && dragObjectOffset && selectedObject>=0) {
+    const o=surfaces[current].objects[selectedObject];
+    o.x=p.x-dragObjectOffset.x; o.y=p.y-dragObjectOffset.y;
+    markSurfaceDirty(current); render2D(); return;
+  }
+  if (!painting || !lastPoint) return;
+  stroke(current,lastPoint,p,tool==='eraser',ui.mirror.checked); lastPoint=p; render2D();
+});
+function endPointer() { painting=false; lastPoint=null; dragObjectOffset=null; schedulePreviewUpdate(); }
+ui.canvas.addEventListener('pointerup',endPointer);
+ui.canvas.addEventListener('pointercancel',endPointer);
+ui.canvas.addEventListener('pointerleave',()=>{ui.coords.textContent=''; if(painting) endPointer();});
+
+document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click',()=>{
+  tool=b.dataset.tool;
+  document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===b));
+  setStatus(`Tool: ${b.textContent}`);
+}));
+ui.brushSize.addEventListener('input',()=>ui.brushSizeLabel.textContent=ui.brushSize.value);
+ui.guideToggle.addEventListener('change',render2D);
+$('btnUndo').addEventListener('click',undo);
+
+$('btnLogo').addEventListener('click',()=>$('logoFile').click());
+$('logoFile').addEventListener('change',async ev=>{
+  const file=ev.target.files?.[0]; ev.target.value=''; if(!file) return;
+  const bmp=await createImageBitmap(file);
+  pushHistory(current);
+  const maxW=420,maxH=250, scale=Math.min(1,maxW/bmp.width,maxH/bmp.height);
+  const w=bmp.width*scale,h=bmp.height*scale;
+  surfaces[current].objects.push({type:'image',image:bmp,x:(W-w)/2,y:(H-h)/2,w,h});
+  selectedObject=surfaces[current].objects.length-1; tool='move';
+  document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x.dataset.tool==='move'));
+  markSurfaceDirty(current); updateObjectControls(); render2D(); setStatus('Logo added');
+});
+$('btnAddText').addEventListener('click',()=>{
+  const text=ui.textInput.value.trim(); if(!text) return toast('Enter text first');
+  pushHistory(current);
+  const size=Math.max(12,Math.min(320,Number(ui.textSize.value)||72));
+  const o={type:'text',text,size,color:ui.textColor.value,font:ui.fontSelect.value,x:W*.36,y:H*.43};
+  surfaces[current].objects.push(o); selectedObject=surfaces[current].objects.length-1; tool='move';
+  document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x.dataset.tool==='move'));
+  markSurfaceDirty(current); updateObjectControls(); render2D(); setStatus('Text added');
+});
+function scaleSelected(factor) {
+  if(selectedObject<0) return;
+  const s=surfaces[current], o=s.objects[selectedObject]; pushHistory(current);
+  if(o.type==='image'){ const cx=o.x+o.w/2,cy=o.y+o.h/2; o.w=Math.max(12,o.w*factor);o.h=Math.max(12,o.h*factor);o.x=cx-o.w/2;o.y=cy-o.h/2; }
+  else o.size=Math.max(12,Math.min(360,o.size*factor));
+  markSurfaceDirty(current); render2D();
+}
+$('btnLogoSmaller').addEventListener('click',()=>scaleSelected(.86));
+$('btnLogoLarger').addEventListener('click',()=>scaleSelected(1.16));
+$('btnObjectSmaller').addEventListener('click',()=>scaleSelected(.86));
+$('btnObjectLarger').addEventListener('click',()=>scaleSelected(1.16));
+$('btnDeleteObject').addEventListener('click',()=>{
+  if(selectedObject<0)return; pushHistory(current); surfaces[current].objects.splice(selectedObject,1); selectedObject=-1;
+  markSurfaceDirty(current); updateObjectControls(); render2D();
+});
+function updateObjectControls(){
+  const yes=selectedObject>=0;
+  ui.objectEmpty.classList.toggle('hidden',yes); ui.objectControls.classList.toggle('hidden',!yes);
+}
+
+function markSurfaceDirty(index) {
+  surfaces[index].dirty=true; previewDirtyRegions.add(index);
+  if (!ui.preview.classList.contains('hidden')) schedulePreviewUpdate();
+}
+function schedulePreviewUpdate() {
+  clearTimeout(previewUpdateTimer);
+  previewUpdateTimer=setTimeout(()=>updatePreviewColors(),140);
+}
+
+ui.btn2d.addEventListener('click',()=>switchView('2d'));
+ui.btn3d.addEventListener('click',()=>switchView('3d'));
+$('btnReset3d').addEventListener('click',()=>reset3D());
+
+async function switchView(mode) {
+  const three=mode==='3d';
+  ui.btn2d.classList.toggle('active',!three); ui.btn3d.classList.toggle('active',three);
+  ui.designer.classList.toggle('hidden',three); ui.preview.classList.toggle('hidden',!three);
+  if (three) {
+    ui.title.textContent='3D Preview';
+    ui.hint.textContent='Live GPU preview of the current aircraft surface design.';
+    try { if(!preview3d.ready) await init3D(); await updatePreviewColors(true); resize3D(); }
+    catch(err){ console.error(err); setStatus(`3D preview failed: ${err.message}`); }
+  } else selectSurface(current);
+}
+
+async function init3D() {
+  setStatus('Loading 3D preview…');
+  const scene=new THREE.Scene(); scene.background=new THREE.Color(0xf4f7fa);
+  const camera=new THREE.PerspectiveCamera(36,1,.1,10000);
+  const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.outputColorSpace=THREE.SRGBColorSpace;
+  ui.threeHost.replaceChildren(renderer.domElement);
+  const controls=new OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=.07;
+  scene.add(new THREE.HemisphereLight(0xffffff,0x718096,2.4));
+  const key=new THREE.DirectionalLight(0xffffff,2.7); key.position.set(3,5,4); scene.add(key);
+  const fill=new THREE.DirectionalLight(0xb9d6ff,1.2); fill.position.set(-4,2,-3); scene.add(fill);
+
+  const buf=await (await fetch(new URL(profile.preview_mesh,PROFILE_BASE))).arrayBuffer();
+  const dv=new DataView(buf);
+  const magic=String.fromCharCode(...new Uint8Array(buf,0,8));
+  if(magic!=='MLSMESH1') throw new Error('Invalid preview mesh');
+  const count=dv.getUint32(8,true), rec=41;
+  if(buf.byteLength<12+count*rec) throw new Error('Preview mesh is truncated');
+  const positions=new Float32Array(count*9), colors=new Float32Array(count*9);
+  const regions=new Uint8Array(count), sx=new Uint16Array(count), sy=new Uint16Array(count);
+  const regionFaces=Array.from({length:surfaces.length},()=>[]);
+  let off=12;
+  for(let t=0;t<count;t++){
+    for(let k=0;k<9;k++){ positions[t*9+k]=dv.getFloat32(off,true); off+=4; }
+    regions[t]=dv.getUint8(off); off+=1; sx[t]=dv.getUint16(off,true); off+=2; sy[t]=dv.getUint16(off,true); off+=2;
+    if(regions[t]<regionFaces.length) regionFaces[regions[t]].push(t);
+    for(let k=0;k<9;k++) colors[t*9+k]=.82;
+  }
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));
+  geometry.setAttribute('color',new THREE.BufferAttribute(colors,3));
+  geometry.computeVertexNormals(); geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  const center=new THREE.Vector3(); geometry.boundingBox.getCenter(center); geometry.translate(-center.x,-center.y,-center.z);
+  geometry.computeBoundingSphere();
+  const material=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.74,metalness:.04,side:THREE.DoubleSide,flatShading:false});
+  const mesh=new THREE.Mesh(geometry,material); scene.add(mesh);
+  const r=geometry.boundingSphere.radius || 100;
+  camera.near=Math.max(.01,r/1000); camera.far=r*30; camera.updateProjectionMatrix();
+  camera.position.set(r*1.5,r*.55,r*1.7); controls.target.set(0,0,0); controls.update();
+  preview3d.defaultCamera={pos:camera.position.clone(),target:controls.target.clone()};
+  preview3d.scene=scene; preview3d.camera=camera; preview3d.renderer=renderer; preview3d.controls=controls;
+  preview3d.mesh=mesh; preview3d.geometry=geometry; preview3d.regions=regions; preview3d.sx=sx; preview3d.sy=sy; preview3d.regionFaces=regionFaces; preview3d.ready=true;
+  const animate=()=>{ preview3d.animation=requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); };
+  animate();
+  setStatus(`3D preview ready · ${count.toLocaleString()} triangles`);
+}
+function reset3D(){
+  if(!preview3d.ready||!preview3d.defaultCamera)return;
+  preview3d.camera.position.copy(preview3d.defaultCamera.pos);
+  preview3d.controls.target.copy(preview3d.defaultCamera.target);
+  preview3d.controls.update();
+}
+function resize3D(){
+  if(!preview3d.ready)return;
+  const r=ui.threeHost.getBoundingClientRect(); if(!r.width||!r.height)return;
+  preview3d.camera.aspect=r.width/r.height; preview3d.camera.updateProjectionMatrix(); preview3d.renderer.setSize(r.width,r.height,false);
+}
+window.addEventListener('resize',resize3D);
+new ResizeObserver(resize3D).observe(ui.threeHost);
+
+async function updatePreviewColors(force=false) {
+  if(!preview3d.ready)return;
+  const regions=force?surfaces.map((_,i)=>i):[...previewDirtyRegions];
+  if(!regions.length)return;
+  const attr=preview3d.geometry.getAttribute('color');
+  for(const ri of regions) {
+    const c=flattenSurface(ri), im=c.getContext('2d',{willReadFrequently:true}).getImageData(0,0,W,H).data;
+    for(const face of preview3d.regionFaces[ri]||[]) {
+      const x=Math.min(W-1,preview3d.sx[face]), y=Math.min(H-1,preview3d.sy[face]), p=(y*W+x)*4;
+      let rr=im[p],gg=im[p+1],bb=im[p+2],aa=im[p+3];
+      if(aa===0){rr=248;gg=250;bb=252;}
+      const r=rr/255,g=gg/255,b=bb/255;
+      const base=face*9;
+      attr.array[base]=r;attr.array[base+1]=g;attr.array[base+2]=b;
+      attr.array[base+3]=r;attr.array[base+4]=g;attr.array[base+5]=b;
+      attr.array[base+6]=r;attr.array[base+7]=g;attr.array[base+8]=b;
+    }
+    surfaces[ri].dirty=false; previewDirtyRegions.delete(ri);
+    await new Promise(requestAnimationFrame);
+  }
+  attr.needsUpdate=true;
+}
+
+$('btnExport').addEventListener('click',exportLivery);
+$('btnCancelExport').addEventListener('click',()=>{
+  if(exportWorker){ exportWorker.terminate(); exportWorker=null; }
+  ui.exportModal.classList.add('hidden'); setStatus('Export cancelled');
+});
+
+async function exportLivery() {
+  if(!profile)return;
+  const fields={
+    title:$('pkgTitle').value.trim(), variation:$('pkgVariation').value.trim(), registration:$('pkgRegistration').value.trim(),
+    manufacturer:$('pkgManufacturer').value.trim(), model:$('pkgModel').value.trim(), creator:$('pkgCreator').value.trim(),
+    base:$('pkgBase').value.trim(), description:$('pkgDescription').value.trim()
+  };
+  if(!fields.title || !fields.variation){ toast('Enter Package title and Display name in Export Details'); document.querySelector('.package-card').open=true; return; }
+  ui.exportModal.classList.remove('hidden'); ui.progressBar.style.width='4%'; ui.progressText.textContent='Flattening aircraft surfaces…';
+  try {
+    const surfaceBuffers=[];
+    for(let i=0;i<surfaces.length;i++){
+      const c=flattenSurface(i);
+      const blob=await new Promise((resolve,reject)=>c.toBlob(b=>b?resolve(b):reject(new Error('PNG encode failed')),'image/png'));
+      surfaceBuffers.push(await blob.arrayBuffer());
+      ui.progressBar.style.width=`${5+Math.round((i+1)/surfaces.length*18)}%`;
+      await new Promise(requestAnimationFrame);
+    }
+    exportWorker=new Worker('./bake-worker.js');
+    exportWorker.onmessage=ev=>{
+      const m=ev.data;
+      if(m.type==='progress'){ ui.progressBar.style.width=`${m.percent}%`; ui.progressText.textContent=m.text; }
+      else if(m.type==='done'){
+        const blob=new Blob([m.buffer],{type:'application/zip'}); const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob); a.download=m.filename; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+        ui.exportModal.classList.add('hidden'); setStatus('Livery ZIP created'); toast('Livery ZIP created');
+        exportWorker.terminate(); exportWorker=null;
+      } else if(m.type==='error'){
+        throw new Error(m.message);
+      }
+    };
+    exportWorker.onerror=err=>{
+      console.error(err); ui.exportModal.classList.add('hidden'); setStatus('Export failed'); toast(`Export failed: ${err.message}`);
+      exportWorker?.terminate(); exportWorker=null;
+    };
+    exportWorker.postMessage({type:'export',profile,profileBase:PROFILE_BASE,surfaceBuffers,fields,version:VERSION},surfaceBuffers);
+  } catch(err) {
+    console.error(err); ui.exportModal.classList.add('hidden'); setStatus(`Export failed: ${err.message}`); toast('Export failed');
+  }
+}
+
+async function registerServiceWorker(){
+  if('serviceWorker' in navigator && location.protocol==='https:'){
+    try { await navigator.serviceWorker.register('./sw.js'); } catch(e){ console.warn('SW',e); }
+  }
+}
+init();
