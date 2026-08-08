@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="MSFS Livery Studio — surface-first aircraft livery designer">
+  <title>MSFS Livery Studio · Web v0.7.4 Alpha</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">LS</div>
+        <div>
+          <div class="brand-title">MSFS Livery Studio</div>
+          <div class="brand-sub">WEB · v0.7.4 ALPHA</div>
+        </div>
+      </div>
+
+      <div class="view-switch" role="group" aria-label="View">
+        <button id="btn2d" class="seg active">2D Designer</button>
+        <button id="btn3d" class="seg">3D Preview</button>
+        <button id="btnUV" class="seg">UV Preview</button>
+      </div>
+
+      <div class="top-actions">
+        <button id="btnUndo" class="btn ghost">Undo</button>
+        <button id="btnReset3d" class="btn ghost">Reset 3D</button>
+        <button id="btnGoogleTop" class="btn ghost">Google</button>
+        <button id="btnExport" class="btn primary">Export Livery ZIP</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="left-panel">
+        <div class="panel-head">
+          <div class="eyebrow">AIRCRAFT</div>
+          <select id="aircraftSelect" class="select" aria-label="Aircraft">
+            <option value="A380X">FlyByWire A380X</option>
+          </select>
+        </div>
+        <div id="surfaceList" class="surface-list"></div>
+        <div class="left-footer">
+          <span class="dot" id="profileDot"></span>
+          <span id="profileStatus">Loading profile…</span>
+        </div>
+      </aside>
+
+      <section class="stage-panel">
+        <div class="stage-head">
+          <div>
+            <h1 id="surfaceTitle">Surface Designer</h1>
+            <p id="surfaceHint">Paint the aircraft surface. UV placement stays hidden and automatic.</p>
+          </div>
+          <div class="stage-badges">
+            <span class="badge">GPU 3D</span>
+            <span class="badge">Auto UV Bake</span>
+          </div>
+        </div>
+
+        <div id="designerView" class="stage-body">
+          <div class="canvas-shell">
+            <canvas id="designCanvas" width="1024" height="1024"></canvas>
+            <div id="canvasBusy" class="canvas-busy hidden">
+              <div class="spinner"></div>
+              <span>Loading surface…</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="previewView" class="stage-body hidden">
+          <div id="threeHost" class="three-host"></div>
+          <div id="previewBusy" class="preview-busy hidden">
+            <div class="spinner preview-spinner"></div>
+            <div class="preview-loading-title">Loading 3D Preview...</div>
+            <div id="previewLoadingDetail" class="preview-loading-detail">Preparing high-detail A380X mesh</div>
+          </div>
+          <div class="preview-help">Drag to orbit · Wheel to zoom · Right-drag to pan</div>
+        </div>
+
+        <div id="uvView" class="stage-body hidden">
+          <div class="uv-toolbar">
+            <label class="uv-select-label">
+              <span>Generated texture</span>
+              <select id="uvTextureSelect" class="select"></select>
+            </label>
+            <button id="btnRefreshUV" class="btn ghost">Refresh UV Bake</button>
+          </div>
+          <div class="uv-canvas-shell">
+            <canvas id="uvCanvas" width="1024" height="1024"></canvas>
+            <div id="uvBusy" class="canvas-busy hidden">
+              <div class="spinner"></div>
+              <span>Baking UV texture…</span>
+            </div>
+          </div>
+          <div class="uv-note">Preview only — editing stays on the aircraft surface view.</div>
+        </div>
+
+        <div class="statusbar">
+          <div id="statusText">Ready</div>
+          <div id="coordText"></div>
+        </div>
+      </section>
+
+      <aside class="right-panel">
+        <section class="tool-card">
+          <div class="tool-title">Paint</div>
+          <div class="tool-row tool-grid">
+            <button data-tool="brush" class="tool-btn active">Brush</button>
+            <button data-tool="eraser" class="tool-btn">Eraser</button>
+            <button data-tool="fill" class="tool-btn">Fill Surface</button>
+            <button data-tool="move" class="tool-btn">Move Object</button>
+          </div>
+
+          <label class="field">
+            <span>Color</span>
+            <input id="paintColor" type="color" value="#0f172a">
+          </label>
+
+          <label class="field">
+            <span>Brush size <strong id="brushSizeLabel">28</strong></span>
+            <input id="brushSize" type="range" min="2" max="140" value="28">
+          </label>
+
+          <label class="check">
+            <input id="mirrorToggle" type="checkbox">
+            <span>Mirror paint to opposite surface</span>
+          </label>
+
+          <label class="check">
+            <input id="guideToggle" type="checkbox" checked>
+            <span>Show orthographic aircraft guide</span>
+          </label>
+        </section>
+
+        <section class="tool-card">
+          <div class="tool-title">Logo</div>
+          <button id="btnLogo" class="btn full">Import Logo</button>
+          <input id="logoFile" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <div class="two-col">
+            <button id="btnLogoSmaller" class="btn ghost">Smaller</button>
+            <button id="btnLogoLarger" class="btn ghost">Larger</button>
+          </div>
+        </section>
+
+        <section class="tool-card">
+          <div class="tool-title">Text</div>
+          <label class="field">
+            <span>Text</span>
+            <input id="textInput" class="text-input" type="text" value="">
+          </label>
+          <div class="two-col">
+            <label class="field compact">
+              <span>Size</span>
+              <input id="textSize" class="number-input" type="number" min="12" max="320" value="72">
+            </label>
+            <label class="field compact">
+              <span>Color</span>
+              <input id="textColor" type="color" value="#111827">
+            </label>
+          </div>
+          <label class="field">
+            <span>Font</span>
+            <select id="fontSelect" class="select">
+              <option value="Arial, sans-serif">Sans</option>
+              <option value="Georgia, serif">Serif</option>
+              <option value="'Courier New', monospace">Monospace</option>
+              <option value="system-ui, sans-serif">System</option>
+            </select>
+          </label>
+          <button id="btnAddText" class="btn full">Add Text</button>
+        </section>
+
+        <section class="tool-card">
+          <div class="tool-title">Selected Object</div>
+          <div id="objectEmpty" class="muted">No object selected.</div>
+          <div id="objectControls" class="hidden">
+            <div class="two-col">
+              <button id="btnObjectSmaller" class="btn ghost">Smaller</button>
+              <button id="btnObjectLarger" class="btn ghost">Larger</button>
+            </div>
+            <button id="btnDeleteObject" class="btn danger full">Delete Object</button>
+          </div>
+        </section>
+        <section class="tool-card cloud-card">
+          <div class="tool-title">Cloud Project</div>
+          <div id="googleState" class="cloud-state">
+            <span class="cloud-dot"></span>
+            <span>Not connected</span>
+          </div>
+          <button id="btnGoogle" class="btn full">Connect Google</button>
+          <div class="two-col cloud-actions">
+            <button id="btnCloudSave" class="btn ghost" disabled>Save Cloud</button>
+            <button id="btnCloudLoad" class="btn ghost" disabled>Load Cloud</button>
+          </div>
+          <label class="check">
+            <input id="cloudAutosave" type="checkbox" checked disabled>
+            <span>Auto-save to Google Drive after changes</span>
+          </label>
+          <div id="cloudSavedAt" class="muted cloud-time"></div>
+        </section>
+
+<details class="tool-card package-card">
+          <summary>Export Details</summary>
+          <label class="field">
+            <span>Package title</span>
+            <input id="pkgTitle" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Display name</span>
+            <input id="pkgVariation" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Registration</span>
+            <input id="pkgRegistration" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Manufacturer</span>
+            <input id="pkgManufacturer" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Aircraft model</span>
+            <input id="pkgModel" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Creator</span>
+            <input id="pkgCreator" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Base container</span>
+            <input id="pkgBase" class="text-input" type="text" value="">
+          </label>
+          <label class="field">
+            <span>Description</span>
+            <textarea id="pkgDescription" class="text-area"></textarea>
+          </label>
+        </details>
+      </aside>
+    </main>
+
+    <div id="exportModal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="modal-title">Building livery package</div>
+        <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+        <div id="progressText" class="progress-text">Preparing surfaces…</div>
+        <button id="btnCancelExport" class="btn ghost">Cancel</button>
+      </div>
+    </div>
+
+    <div id="googleSetupModal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="modal-title">Google Cloud setup</div>
+        <p class="modal-copy">
+          Enter the OAuth 2.0 Web Client ID for this GitHub Pages site.
+          The authorized JavaScript origin must include:
+        </p>
+        <code id="googleOrigin" class="origin-code"></code>
+        <label class="field">
+          <span>OAuth Client ID</span>
+          <input id="googleClientIdInput" class="text-input" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
+        </label>
+        <div class="two-col">
+          <button id="btnGoogleSetupCancel" class="btn ghost">Cancel</button>
+          <button id="btnGoogleSetupSave" class="btn primary">Save & Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="./google-config.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
