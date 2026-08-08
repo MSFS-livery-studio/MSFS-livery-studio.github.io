@@ -1,5 +1,0 @@
-MSFS Livery Studio application code: project-specific code.
-
-A380X surface masks, automatic projection maps and reduced 3D preview geometry in this build were generated from model files supplied by the user. The original OBJ, FBX and MTL model files are not included. Redistribution rights for these derived assets must be verified before public distribution.
-
-Microsoft Flight Simulator, Airbus, A380 and FlyByWire are trademarks or names of their respective owners. This project is not affiliated with or endorsed by them.
